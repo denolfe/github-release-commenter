@@ -22,6 +22,11 @@ inputs:
     description: Skip commenting if any of the given label are present. Multiple labels can be separated by commas.
     required: false
     default: "dependencies"
+  tag-filter:
+    description: |
+      Filter tags by a regular expression. Must be escaped. e.g. 'v\\d' to isolate tags between major versions.
+    required: false
+    default: null
 runs:
   using: node20
   main: dst/index.js

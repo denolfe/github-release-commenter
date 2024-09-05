@@ -15,21 +15,45 @@ const releaseTagTemplateRegex = /{release_tag}/g;
       .payload as Webhooks.EventPayloadMap["release"];
 
     const githubToken = core.getInput("GITHUB_TOKEN");
+    const tagFilter = core.getInput("tag-filter") || undefined;  // Accept tag filter as an input
     const octokit = github.getOctokit(githubToken);
 
     const commentTemplate = core.getInput("comment-template");
     const labelTemplate = core.getInput("label-template") || null;
     const skipLabelTemplate = core.getInput("skip-label") || null;
 
-    // watch out, this is returning deleted releases for some reason
-    const { data: releases } = await octokit.rest.repos.listReleases({
+    // Fetch the releases with the optional tag filter applied
+    const { data: rawReleases } = await octokit.rest.repos.listReleases({
       ...github.context.repo,
       per_page: 2,
     });
 
+    // Get the current release tag
+    const currentTag = payload.release.tag_name
+
+    let releases = rawReleases;
+
+    // Filter releases by the tag filter if provided
+    if (tagFilter) {
+      core.info(`Filtering releases by tag filter: ${tagFilter}`);
+      // Get the matching part of the current release tag
+      const regexMatch = currentTag.match(tagFilter)?.[0];
+      if (!regexMatch) {
+        core.error(`Current release tag ${currentTag} does not match the tag filter ${tagFilter}`);
+        return;
+      }
+
+      core.info(`Matched string from filter: ${regexMatch}`);
+
+      releases = releases.filter((release) => {
+        const match = release.tag_name.match(regexMatch)?.[0];
+        return match
+      });
+    }
+
     if (releases.length < 2) {
       if (!releases.length) {
-        core.error("no releases found");
+        core.error(`No releases found with the provided tag filter: '${tagFilter}'`);
         return;
       }
 
@@ -39,6 +63,8 @@ const releaseTagTemplateRegex = /{release_tag}/g;
 
     const [currentRelease, priorRelease] = releases;
 
+    core.info(`${priorRelease.tag_name}...${currentRelease.tag_name}`);
+
     const {
       data: { commits },
     } = await octokit.rest.repos.compareCommits({
@@ -47,10 +73,8 @@ const releaseTagTemplateRegex = /{release_tag}/g;
       head: currentRelease.tag_name,
     });
 
-    core.info(`${priorRelease.tag_name}...${currentRelease.tag_name}`);
-
     if (!currentRelease.name) {
-      core.info("current release has no name, will fall back to the tag name");
+      core.info("Current release has no name, will fall back to the tag name.");
     }
     const releaseLabel = currentRelease.name || currentRelease.tag_name;
 
@@ -62,6 +86,7 @@ const releaseTagTemplateRegex = /{release_tag}/g;
       .join(releaseLabel)
       .split(releaseTagTemplateRegex)
       .join(currentRelease.tag_name);
+
     const parseLabels = (rawInput: string | null) =>
       rawInput
         ?.split(releaseNameTemplateRegex)
@@ -71,6 +96,7 @@ const releaseTagTemplateRegex = /{release_tag}/g;
         ?.split(",")
         ?.map((l) => l.trim())
         .filter((l) => l);
+
     const labels = parseLabels(labelTemplate);
     const skipLabels = parseLabels(skipLabelTemplate);
 
@@ -224,6 +250,8 @@ const releaseTagTemplateRegex = /{release_tag}/g;
       ),
     );
 
+    core.info(`Linked issues/PRs: \n${Array.from(linkedIssuesPrs).join("\n")}`);
+
     const requests: Array<Promise<unknown>> = [];
     for (const issueNumber of linkedIssuesPrs) {
       const baseRequest = {
@@ -247,6 +275,7 @@ const releaseTagTemplateRegex = /{release_tag}/g;
         requests.push(octokit.rest.issues.addLabels(request));
       }
     }
+
     await Promise.all(requests);
   } catch (error) {
     core.error(error as Error);
